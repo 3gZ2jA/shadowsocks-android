@@ -22,6 +22,8 @@ package com.github.shadowsocks
 
 import android.app.*
 import android.app.admin.DevicePolicyManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
@@ -65,6 +67,7 @@ object Core {
         @VisibleForTesting set
     lateinit var configureIntent: (Context) -> PendingIntent
     val activity by lazy { app.getSystemService<ActivityManager>()!! }
+    val clipboard by lazy { app.getSystemService<ClipboardManager>()!! }
     val connectivity by lazy { app.getSystemService<ConnectivityManager>()!! }
     val notification by lazy { app.getSystemService<NotificationManager>()!! }
     val packageInfo: PackageInfo by lazy { getPackageInfo(app.packageName) }
@@ -97,9 +100,9 @@ object Core {
 
         if (Build.VERSION.SDK_INT >= 24) {  // migrate old files
             deviceStorage.moveDatabaseFrom(app, Key.DB_PUBLIC)
-            val old = Acl.getFile(Acl.CUSTOM_RULES, app)
+            val old = Acl.getFile(Acl.CUSTOM_RULES_USER, app)
             if (old.canRead()) {
-                Acl.getFile(Acl.CUSTOM_RULES).writeText(old.readText())
+                Acl.getFile(Acl.CUSTOM_RULES_USER).writeText(old.readText())
                 old.delete()
             }
         }
@@ -158,6 +161,14 @@ object Core {
     fun getPackageInfo(packageName: String) = app.packageManager.getPackageInfo(packageName,
             if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES
             else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES)!!
+
+    fun trySetPrimaryClip(clip: String) = try {
+        clipboard.setPrimaryClip(ClipData.newPlainText(null, clip))
+        true
+    } catch (e: RuntimeException) {
+        Timber.d(e)
+        false
+    }
 
     fun startService() = ContextCompat.startForegroundService(app, Intent(app, ShadowsocksConnection.serviceClass))
     fun reloadService() = app.sendBroadcast(Intent(Action.RELOAD).setPackage(app.packageName))
