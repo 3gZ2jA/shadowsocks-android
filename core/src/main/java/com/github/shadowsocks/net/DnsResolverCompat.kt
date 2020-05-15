@@ -70,6 +70,7 @@ sealed class DnsResolverCompat {
 
         fun prepareDnsResponse(request: Message) = Message(request.header.id).apply {
             header.setFlag(Flags.QR.toInt())    // this is a response
+            header.setFlag(Flags.RA.toInt())    // recursion available
             if (request.header.getFlag(Flags.RD.toInt())) header.setFlag(Flags.RD.toInt())
             request.question?.also { addRecord(it, Section.QUESTION) }
         }
@@ -120,7 +121,7 @@ sealed class DnsResolverCompat {
         override suspend fun resolveOnActiveNetwork(host: String) =
                 GlobalScope.async(unboundedIO) { InetAddress.getAllByName(host) }.await()
 
-        private suspend fun resolveRaw(query: ByteArray,
+        private suspend fun resolveRaw(query: ByteArray, networkSpecified: Boolean = true,
                                        hostResolver: suspend (String) -> Array<InetAddress>): ByteArray {
             val request = try {
                 Message(query)
@@ -135,11 +136,23 @@ sealed class DnsResolverCompat {
             val isIpv6 = when (val type = question?.type) {
                 Type.A -> false
                 Type.AAAA -> true
+                Type.PTR -> {
+                    // Android does not provide a PTR lookup API for Network prior to Android 10
+                    if (networkSpecified) throw UnsupportedOperationException()
+                    val ip = try {
+                        ReverseMap.fromName(question.name)
+                    } catch (e: IOException) {
+                        throw UnsupportedOperationException(e)  // unrecognized PTR name
+                    }
+                    val hostname = Name.fromString(GlobalScope.async(unboundedIO) { ip.hostName }.await())
+                    return prepareDnsResponse(request).apply {
+                        addRecord(PTRRecord(question.name, DClass.IN, TTL, hostname), Section.ANSWER)
+                    }.toWire()
+                }
                 else -> throw UnsupportedOperationException("Unsupported query type $type")
             }
             val host = question.name.canonicalize().toString(true)
             return prepareDnsResponse(request).apply {
-                header.setFlag(Flags.RA.toInt())   // recursion available
                 for (address in hostResolver(host).asIterable().run {
                     if (isIpv6) filterIsInstance<Inet6Address>() else filterIsInstance<Inet4Address>()
                 }) addRecord(when (address) {
@@ -152,7 +165,7 @@ sealed class DnsResolverCompat {
         override suspend fun resolveRaw(network: Network, query: ByteArray) =
                 resolveRaw(query) { resolve(network, it) }
         override suspend fun resolveRawOnActiveNetwork(query: ByteArray) =
-                resolveRaw(query, this::resolveOnActiveNetwork)
+                resolveRaw(query, false, this::resolveOnActiveNetwork)
     }
 
     @TargetApi(23)
