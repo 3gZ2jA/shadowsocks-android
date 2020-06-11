@@ -25,7 +25,7 @@ import android.annotation.TargetApi
 import android.app.Application
 import android.content.Context
 
-@SuppressLint("Registered")
+@SuppressLint("BadConfigurationProvider", "Registered")
 @TargetApi(24)
 class DeviceStorageApp(context: Context) : Application() {
     init {
